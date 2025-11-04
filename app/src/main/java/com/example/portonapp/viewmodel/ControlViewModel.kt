@@ -1,14 +1,16 @@
 package com.example.portonapp.viewmodel
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.portonapp.componentes.firebase.escribirFirebase
 import com.example.portonapp.data.model.ManipulationMode
 import com.example.portonapp.data.model.PortonState
+import com.google.firebase.Firebase
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
-import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
+import com.google.firebase.database.database
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,7 +19,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 
 /**
- * ViewModel simplificado - usa Firebase directamente
+ * ViewModel para el control del portón
+ * Usa los componentes base de Firebase (LeerFirebase/escribirFirebase)
  */
 class ControlViewModel : ViewModel() {
     
@@ -27,29 +30,55 @@ class ControlViewModel : ViewModel() {
     // Job para el temporizador de cierre automático
     private var autoCloseJob: Job? = null
     
-    private val database = FirebaseDatabase.getInstance().reference
+    // Referencia a Firebase siguiendo el patrón de los componentes
+    private val database = Firebase.database
+    private val portonRef = database.getReference("porton")
     
     init {
         observePortonState()
     }
     
-    // Escuchar cambios en tiempo real desde Firebase
+    /**
+     * Observa cambios en tiempo real desde Firebase
+     * Sigue el patrón establecido en LeerFirebase.kt
+     */
     private fun observePortonState() {
+        Log.d("ControlViewModel", "Iniciando observación de porton")
+        
         val listener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                val state = snapshot.getValue(PortonState::class.java) ?: PortonState()
-                _uiState.value = _uiState.value.copy(
-                    portonState = state,
-                    isLoading = false
-                )
-                handleAutoClose(state)
+                try {
+                    Log.d("ControlViewModel", "Datos recibidos de Firebase")
+                    val state = snapshot.getValue(PortonState::class.java) ?: PortonState()
+                    
+                    _uiState.value = _uiState.value.copy(
+                        portonState = state,
+                        isLoading = false,
+                        errorMessage = null
+                    )
+                    
+                    Log.d("ControlViewModel", "Estado actualizado: $state")
+                    handleAutoClose(state)
+                    
+                } catch (e: Exception) {
+                    Log.e("ControlViewModel", "Error parseando datos", e)
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        errorMessage = "Error: ${e.message}"
+                    )
+                }
             }
             
             override fun onCancelled(error: DatabaseError) {
-                // Manejar error si es necesario
+                Log.w("ControlViewModel", "Lectura cancelada", error.toException())
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    errorMessage = "Error: ${error.message}"
+                )
             }
         }
-        database.child("porton").addValueEventListener(listener)
+        
+        portonRef.addValueEventListener(listener)
     }
     
     /**
@@ -111,6 +140,10 @@ class ControlViewModel : ViewModel() {
         _uiState.value = _uiState.value.copy(portonState = updatedState)
     }
     
+    /**
+     * Abre el portón
+     * Usa escribirFirebase siguiendo el patrón de EscribirFirebase.kt
+     */
     fun openPorton() {
         val currentState = _uiState.value.portonState
         if (!currentState.estaAbierto) {
@@ -118,10 +151,25 @@ class ControlViewModel : ViewModel() {
                 estaAbierto = true,
                 ultimaActualizacion = System.currentTimeMillis()
             )
-            escribirFirebase("porton", newState)
+            
+            escribirFirebase(
+                field = "porton",
+                value = newState,
+                onSuccess = {
+                    Log.d("ControlViewModel", "✅ Portón abierto exitosamente")
+                },
+                onError = { error ->
+                    Log.e("ControlViewModel", "❌ Error abriendo portón: $error")
+                    _uiState.value = _uiState.value.copy(errorMessage = error)
+                }
+            )
         }
     }
     
+    /**
+     * Cierra el portón
+     * Usa escribirFirebase siguiendo el patrón de EscribirFirebase.kt
+     */
     fun closePorton() {
         val currentState = _uiState.value.portonState
         if (currentState.estaAbierto) {
@@ -132,10 +180,25 @@ class ControlViewModel : ViewModel() {
                 estaAbierto = false,
                 ultimaActualizacion = System.currentTimeMillis()
             )
-            escribirFirebase("porton", newState)
+            
+            escribirFirebase(
+                field = "porton",
+                value = newState,
+                onSuccess = {
+                    Log.d("ControlViewModel", "✅ Portón cerrado exitosamente")
+                },
+                onError = { error ->
+                    Log.e("ControlViewModel", "❌ Error cerrando portón: $error")
+                    _uiState.value = _uiState.value.copy(errorMessage = error)
+                }
+            )
         }
     }
     
+    /**
+     * Cambia el modo de manipulación
+     * Usa escribirFirebase siguiendo el patrón de EscribirFirebase.kt
+     */
     fun setManipulationMode(mode: ManipulationMode) {
         if (mode != ManipulationMode.AUTOMATIC) {
             autoCloseJob?.cancel()
@@ -147,24 +210,59 @@ class ControlViewModel : ViewModel() {
             modoManipulacion = mode,
             ultimaActualizacion = System.currentTimeMillis()
         )
-        escribirFirebase("porton", newState)
+        
+        escribirFirebase(
+            field = "porton",
+            value = newState,
+            onSuccess = {
+                Log.d("ControlViewModel", "✅ Modo cambiado a $mode exitosamente")
+            },
+            onError = { error ->
+                Log.e("ControlViewModel", "❌ Error cambiando modo: $error")
+                _uiState.value = _uiState.value.copy(errorMessage = error)
+            }
+        )
     }
     
+    /**
+     * Cambia el tiempo de cierre automático
+     * Usa escribirFirebase siguiendo el patrón de EscribirFirebase.kt
+     */
     fun setClosingTime(seconds: Int) {
         val currentState = _uiState.value.portonState
         val newState = currentState.copy(
             tiempoCierreSegundos = seconds,
             ultimaActualizacion = System.currentTimeMillis()
         )
-        escribirFirebase("porton", newState)
+        
+        escribirFirebase(
+            field = "porton",
+            value = newState,
+            onSuccess = {
+                Log.d("ControlViewModel", "✅ Tiempo de cierre cambiado a $seconds segundos")
+            },
+            onError = { error ->
+                Log.e("ControlViewModel", "❌ Error cambiando tiempo: $error")
+                _uiState.value = _uiState.value.copy(errorMessage = error)
+            }
+        )
+    }
+    
+    /**
+     * Limpia el mensaje de error
+     */
+    fun clearError() {
+        _uiState.value = _uiState.value.copy(errorMessage = null)
     }
 }
 
 /**
  * Estado de la UI de control
+ * Sigue el patrón de Triple<T?, Boolean, String?> de LeerFirebase
  */
 data class ControlUiState(
     val portonState: PortonState = PortonState(),
-    val isLoading: Boolean = false
+    val isLoading: Boolean = true,
+    val errorMessage: String? = null
 )
 
