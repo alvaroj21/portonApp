@@ -65,8 +65,8 @@ class ControlViewModel : ViewModel() {
             val closingTime = state.tiempoCierreSegundos
             var remainingSeconds = closingTime
             
-            // Actualizar el estado inicial con el tiempo restante
-            updateAutoCloseTimer(remainingSeconds)
+            // Actualizar el estado local inicial con el tiempo restante
+            updateLocalTimer(remainingSeconds)
             
             autoCloseJob = viewModelScope.launch {
                 // Contar hacia atrás cada segundo
@@ -74,15 +74,15 @@ class ControlViewModel : ViewModel() {
                     delay(1000L) // Esperar 1 segundo
                     remainingSeconds--
                     
-                    // Actualizar el contador en Firebase cada segundo
-                    updateAutoCloseTimer(remainingSeconds)
+                    // Actualizar solo el estado LOCAL, no Firebase (evita bucle)
+                    updateLocalTimer(remainingSeconds)
                     
                     // Verificar que aún esté abierto y en modo automático
                     val currentState = _uiState.value.portonState
                     if (!currentState.estaAbierto || 
                         currentState.modoManipulacion != ManipulationMode.AUTOMATIC) {
                         // Cancelar si cambió el estado o modo
-                        updateAutoCloseTimer(0)
+                        updateLocalTimer(0)
                         return@launch
                     }
                 }
@@ -91,25 +91,24 @@ class ControlViewModel : ViewModel() {
                 val currentState = _uiState.value.portonState
                 if (currentState.estaAbierto && 
                     currentState.modoManipulacion == ManipulationMode.AUTOMATIC) {
-                    updateAutoCloseTimer(0)
+                    updateLocalTimer(0)
                     // Cerrar automáticamente
                     closePorton()
                 }
             }
         } else {
             // Si no está en modo automático o está cerrado, resetear el contador
-            updateAutoCloseTimer(0)
+            updateLocalTimer(0)
         }
     }
     
-    // Actualizar contador en Firebase
-    private fun updateAutoCloseTimer(remainingSeconds: Int) {
+    // Actualizar contador SOLO localmente (no escribe a Firebase)
+    private fun updateLocalTimer(remainingSeconds: Int) {
         val currentState = _uiState.value.portonState
         val updatedState = currentState.copy(
-            segundosRestantesCierreAuto = remainingSeconds,
-            ultimaActualizacion = System.currentTimeMillis()
+            segundosRestantesCierreAuto = remainingSeconds
         )
-        escribirFirebase("porton", updatedState)
+        _uiState.value = _uiState.value.copy(portonState = updatedState)
     }
     
     fun openPorton() {
